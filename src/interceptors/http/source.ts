@@ -597,14 +597,50 @@ export class NodeHttpRequestSource extends Interceptor<HttpRequestEventMap> {
         socket.on('close', () => requestParser?.free())
 
         /**
+         * @note An HTTP client always speaks first, but it may read a new
+         * connection long before writing to it (e.g. a pooled connection
+         * opened ahead of its request, one reopened after an abort, or a
+         * request body that arrives late). Known HTTP clients are those of
+         * "http.ClientRequest" and the connections a "fetch()" request opens
+         * to its own origin. Any other socket opened in a request context
+         * (e.g. by a request listener) may speak any protocol.
+         */
+        const isHttpClientConnection = (): boolean => {
+          if (rawSocket._httpMessage != null) {
+            return true
+          }
+
+          const initiator = connectionRequestContext?.initiator
+
+          if (!(initiator instanceof Request)) {
+            return false
+          }
+
+          /**
+           * @note The URL parser may reject the connection's host (e.g. an
+           * IPv6 address with a zone id). Such a connection is not one a
+           * fetch request opens to its own origin.
+           */
+          try {
+            return (
+              new URL(initiator.url).host ===
+              connectionOptionsToUrl(connectionOptions, socket).host
+            )
+          } catch {
+            return false
+          }
+        }
+
+        /**
          * @note A client that waits for the server to speak first (e.g. a
          * SQL handshake) starts reading without writing anything, so
          * protocol detection never runs. Pass such connections through
-         * once the client reads and still no bytes have arrived. Clients
-         * that write after an async setup (e.g. Undici loading its parser)
-         * attach their readers right before writing; "setImmediate" lets
-         * those writes, including ones from nested ticks of the "connect"
-         * listeners, land first.
+         * once the client reads and still no bytes have arrived, unless
+         * the client is a known HTTP client: its connection stays pending
+         * until it writes. Clients that write after an async setup (e.g.
+         * Undici loading its parser) attach their readers right before
+         * writing; "setImmediate" lets those writes, including ones from
+         * nested ticks of the "connect" listeners, land first.
          */
         const onClientRead = (event: string | symbol) => {
           if (event !== 'data' && event !== 'readable') {
@@ -614,7 +650,11 @@ export class NodeHttpRequestSource extends Interceptor<HttpRequestEventMap> {
           rawSocket.removeListener('newListener', onClientRead)
 
           setImmediate(() => {
-            if (isHttpConnection === undefined && shouldPassthrough()) {
+            if (
+              isHttpConnection === undefined &&
+              !isHttpClientConnection() &&
+              shouldPassthrough()
+            ) {
               socketController.passthrough()
             }
           })

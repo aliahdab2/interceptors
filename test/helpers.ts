@@ -169,6 +169,17 @@ export async function createRawTestServer<T extends net.Server>(
   }
 }
 
+/**
+ * Get a port nothing listens on: a real connection to it is refused.
+ */
+export async function getClosedPort(): Promise<number> {
+  const server = net.createServer()
+  await new Promise<void>((resolve) => server.listen(0, resolve))
+  const { port } = server.address() as net.AddressInfo
+  await new Promise((resolve) => server.close(resolve))
+  return port
+}
+
 export function spyOnSocket(socket: net.Socket) {
   const eventNames = [
     'lookup',

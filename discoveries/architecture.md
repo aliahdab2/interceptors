@@ -148,6 +148,16 @@ that the socket is still pending and alive. Malformed HTTP with a pending reques
 uses that request controller's passthrough. There is no decline/counting API and
 no promise holding a connection listener open until socket closure.
 
+A client that starts reading before writing anything (a protocol where the server
+speaks first) is passed through one `setImmediate` after its first `data` or
+`readable` listener. A known HTTP client is the exception: the socket of an
+`http.ClientRequest` (`_httpMessage`), or one a `fetch()` request opens to its own
+origin through the fetch interceptor (its request context's initiator). It may
+read a pooled connection long before writing to it, so that connection stays
+pending until the client writes. Other sockets opened in a request context (e.g.
+by a request listener) are not HTTP clients. Undici used without the fetch
+interceptor carries neither signal.
+
 The Unix tests still require one connect with no interception listeners. A
 separate deferred-passthrough test requires synthetic plus real connect and
 verifies once callbacks and buffered bytes are not duplicated. The Undici test
